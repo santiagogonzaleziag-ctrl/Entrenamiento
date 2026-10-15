@@ -1,0 +1,18 @@
+{
+  "carreras": [
+    {
+      "nombre": "Media Maratón de Málaga",
+      "fecha": "2026-11-08",
+      "distancia_km": 21.0975,
+      "objetivo": "1:26:30",
+      "prediccion": "half"
+    },
+    {
+      "nombre": "Media Maratón de Sevilla",
+      "fecha": "2026-12-13",
+      "distancia_km": 21.0975,
+      "objetivo": "1:26:30",
+      "prediccion": "half"
+    }
+  ]
+}

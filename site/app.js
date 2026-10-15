@@ -225,6 +225,98 @@
     countUp(span, m.v, m.d || 0);
   });
 
+  // ---------- objetivos ----------
+  await (async function goals() {
+    let cfg;
+    try { cfg = await (await fetch('objetivos.json', { cache: 'no-cache' })).json(); } catch (e) { return; }
+    const races = (cfg.carreras || []).filter((r) => r.fecha && r.objetivo).sort((a, b) => a.fecha.localeCompare(b.fecha));
+    if (!races.length) return;
+    $('objetivos').hidden = false;
+    const pad = (n) => String(n).padStart(2, '0');
+    const toSecs = (t) => String(t).replace(/[^\d:]/g, '').split(':').reduce((a, v) => a * 60 + +v, 0);
+    const clock = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`; };
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const preds = Object.fromEntries((PG?.predictions || []).map((p) => [p.key, p.secs]));
+    const hist = PG?.predHistory || [];
+    const label = (st) => ({ ok: ['En objetivo', 'var(--good)'], near: ['A tiro', 'var(--warn)'], far: ['Lejos', 'var(--bad)'], done: ['Terminada', 'var(--muted)'] }[st]);
+
+    const cards = races.map((r, idx) => {
+      const dist = r.distancia_km || 21.0975, target = toSecs(r.objetivo);
+      const tPace = target / dist / 60;
+      const days = Math.round((new Date(r.fecha + 'T12:00:00') - new Date(todayIso + 'T12:00:00')) / 864e5);
+      const dateTxt = fdate(r.fecha, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      const proj = preds[r.prediccion || 'half'];
+
+      if (days < 0 || (days === 0 && D.activities.some((a) => a.date === r.fecha && a.family === 'run' && Math.abs(a.km - dist) < 1.5))) {
+        const act = D.activities.find((a) => a.date === r.fecha && a.family === 'run' && Math.abs(a.km - dist) < 1.5);
+        const res = act ? act.min * 60 : null;
+        const [lt, lc] = label('done');
+        return `<article class="race done"><div><span class="chip" style="color:${lc}">${lt}</span><h3>${esc(r.nombre)}</h3><div class="when">${dateTxt}</div></div>
+          <div class="vs"><div><span>Objetivo</span><b>${clock(target)}</b><small>${pace(tPace)}/km</small></div>
+          <div><span>Resultado</span><b style="color:${res && res < target ? 'var(--good)' : 'var(--ink)'}">${res ? clock(res) : '–'}</b><small>${res ? pace(res / act.km / 60) + '/km' : 'sin actividad ese día'}</small></div></div>
+          <p class="gap">${res ? (res < target ? `<strong class="up">¡Objetivo conseguido!</strong> ${clock(target - res)} por debajo.` : `<strong>Te quedaste a ${clock(res - target)}.</strong> A por la siguiente.`) : 'No se encontró una carrera de esa distancia ese día.'}</p></article>`;
+      }
+
+      let st = 'far', gapHtml = '<p class="gap muted">Garmin aún no tiene una proyección para esta distancia. Haz alguna carrera con pulso para que la calcule.</p>';
+      if (proj) {
+        const gap = proj - target, perKm = gap / dist;
+        st = gap < 0 ? 'ok' : gap <= 90 ? 'near' : 'far';
+        const perWeek = days >= 7 ? Math.round(gap / (days / 7)) : null;
+        gapHtml = gap < 0
+          ? `<p class="gap"><strong class="up">Tu proyección ya baja del objetivo</strong> por ${clock(-gap)} (${Math.abs(perKm).toFixed(1)} s/km de margen). Mantén el bloque y llega fresco.</p>`
+          : `<p class="gap"><strong class="${st === 'near' ? '' : 'down'}" style="${st === 'near' ? 'color:var(--warn)' : ''}">Te faltan ${clock(gap)}</strong>, unos ${perKm.toFixed(1)} s/km.${perWeek ? ` Eso es mejorar unos ${perWeek} s de proyección por semana hasta la carrera.` : ''}</p>`;
+      }
+      const [lt, lc] = label(st);
+      const cd = days === 0 ? '¡Hoy!' : days === 1 ? 'Mañana' : days;
+      const cdSub = days >= 7 ? `${Math.floor(days / 7)} ${Math.floor(days / 7) === 1 ? 'semana' : 'semanas'}${days % 7 ? ` y ${days % 7} ${days % 7 === 1 ? 'día' : 'días'}` : ''}` : '';
+      return `<article class="race">
+        <div><span class="chip" style="color:${lc}">${lt}</span><h3>${esc(r.nombre)}</h3><div class="when">${dateTxt}</div>
+          <div class="cd"><b>${cd}</b>${typeof cd === 'number' ? `<span>${days === 1 ? 'día' : 'días'}</span><small>${cdSub}</small>` : ''}</div></div>
+        <div><div class="vs"><div><span>Objetivo · sub</span><b style="color:var(--gold)">${clock(target)}</b><small>${pace(tPace)}/km</small></div>
+          <div><span>Proyección actual</span><b style="color:var(--progress)">${proj ? clock(proj) : '–'}</b><small>${proj ? pace(proj / dist / 60) + '/km' : 'sin datos'}</small></div></div>
+          ${gapHtml}<div class="gauge" id="gauge-${idx}"></div></div>
+        <div class="mini"><div class="ph"><h3 style="font-size:14px;letter-spacing:.1em">Proyección vs objetivo</h3></div><div class="chart" id="goal-chart-${idx}"></div></div>
+      </article>`;
+    });
+    $('races').innerHTML = cards.join('');
+
+    races.forEach((r, idx) => {
+      const dist = r.distancia_km || 21.0975, target = toSecs(r.objetivo), proj = preds[r.prediccion || 'half'];
+      const g = $(`gauge-${idx}`);
+      if (g && proj) {
+        const tP = target / dist, pP = proj / dist; // s/km
+        const lo = Math.min(tP, pP) - 6, hi = Math.max(tP, pP) + 6;
+        const W = 400, H = 58, x = (v) => 10 + ((hi - v) / (hi - lo)) * (W - 20);
+        const s = svg(W, H);
+        el('line', { x1: 10, x2: W - 10, y1: 30, y2: 30, stroke: 'var(--line)', 'stroke-width': 6, 'stroke-linecap': 'round' }, s);
+        el('line', { x1: x(pP), x2: x(tP), y1: 30, y2: 30, stroke: pP <= tP ? 'var(--good)' : 'var(--warn)', 'stroke-width': 6, 'stroke-linecap': 'round', opacity: 0.6 }, s);
+        el('line', { x1: x(tP), x2: x(tP), y1: 18, y2: 42, stroke: 'var(--gold)', 'stroke-width': 3 }, s);
+        el('text', { x: x(tP), y: 12, class: 'axis', 'text-anchor': 'middle', style: 'fill:var(--gold)' }, s).textContent = `objetivo ${pace(tP / 60)}`;
+        el('circle', { cx: x(pP), cy: 30, r: 7, fill: 'var(--progress)', style: 'filter: drop-shadow(0 0 6px var(--progress))' }, s);
+        el('text', { x: x(pP), y: 56, class: 'axis', 'text-anchor': 'middle', style: 'fill:var(--progress)' }, s).textContent = `ahora ${pace(pP / 60)}`;
+        el('text', { x: 10, y: 56, class: 'axis' }, s).textContent = '← más lento';
+        el('text', { x: W - 10, y: 56, class: 'axis', 'text-anchor': 'end' }, s).textContent = 'más rápido →';
+        g.appendChild(s);
+      }
+      const host = $(`goal-chart-${idx}`);
+      if (!host) return;
+      const key = r.prediccion || 'half';
+      const pts = hist.filter((h) => h[key]);
+      if (pts.length >= 2) {
+        chart(host, {
+          n: pts.length, h: 170, invert: true, yFmt: (v) => clock(v),
+          lines: [{ v: pts.map((p) => p[key]), color: 'var(--progress)', w: 2.4, area: true, glow: true, dot: true }],
+          guides: [{ y: target, label: `objetivo ${clock(target)}`, color: 'var(--gold)' }],
+          xLabel: (i) => (i === 0 || i === pts.length - 1 ? fdate(pts[i].date, { day: 'numeric', month: 'short' }) : null),
+          tip: (i) => `<b>${fdate(pts[i].date)}</b><br>Proyección ${clock(pts[i][key])}<br>${pts[i][key] <= target ? 'por debajo' : 'a ' + clock(pts[i][key] - target)} del objetivo`,
+        });
+      } else {
+        host.innerHTML = '<p class="note">La gráfica se irá dibujando a partir de hoy: cada día se guarda tu proyección para ver cómo se acerca al objetivo.</p>';
+      }
+    });
+  })();
+
   // ---------- heatmap ----------
   (function heatmap() {
     $('heat-title').textContent = `${T.activities} actividades`;
