@@ -2,85 +2,110 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Entrenamiento</title>
-  <meta name="description" content="Registro diario de entrenamiento sincronizado desde Garmin Connect">
+  <meta name="description" content="Registro de entrenamiento sincronizado desde Garmin Connect">
+  <meta name="theme-color" content="#07090d">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;1,600;1,700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <script>
-    try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
-  </script>
 </head>
 <body>
+  <nav class="nav" id="nav">
+    <div class="nav-in">
+      <a href="#resumen">Hoy</a><a href="#carga">Carga</a><a href="#progreso">Progreso</a><a href="#recuperacion">Recuperación</a><a href="#habitos">Hábitos</a><a href="#analisis">Análisis</a><a href="#semanas">Semanas</a><a href="#actividades">Actividades</a>
+    </div>
+  </nav>
+
   <main class="wrap">
-    <header class="top">
-      <div>
-        <h1><span id="year"></span> Entrenamiento</h1>
-        <p class="sub" id="sub">Cargando…</p>
+    <header class="hero" id="resumen">
+      <div class="hero-top">
+        <h1><span class="yr" id="year"></span>Entrenamiento</h1>
+        <p class="sync"><i class="live"></i><span id="sub">Cargando…</span></p>
       </div>
-      <button class="theme" id="theme" aria-label="Cambiar tema">◐</button>
+      <div id="demo-banner" class="banner" hidden>Datos de ejemplo. Conecta tu cuenta de Garmin para ver los tuyos.</div>
+
+      <div class="status">
+        <div class="status-main">
+          <span class="eyebrow">Estado de forma</span>
+          <strong class="state" id="state"></strong>
+          <p class="advice" id="advice"></p>
+        </div>
+        <div class="status-nums" id="status-nums"></div>
+      </div>
+
+      <div class="strip" id="strip"></div>
     </header>
 
-    <div id="demo-banner" class="banner" hidden>Datos de ejemplo — conecta tu cuenta de Garmin para ver los tuyos.</div>
-
-    <section class="tiles" id="tiles"></section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2 id="heat-title">Actividades</h2>
-        <div class="legend-scale"><span>Menos</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>Más</span></div>
-      </div>
+    <section class="block" id="actividad">
+      <div class="head"><div><span class="eyebrow">Año en curso</span><h2 id="heat-title">Actividades</h2></div>
+        <div class="scale"><span>Menos</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>Más</span></div></div>
       <div class="heat-scroll"><div id="heatmap"></div></div>
       <div class="day-detail" id="day-detail"></div>
     </section>
 
-    <section class="card">
-      <div class="card-head">
-        <h2>Carga de entrenamiento</h2>
-        <span class="pill" id="form-pill"></span>
-      </div>
-      <div class="load-legend" id="load-legend"></div>
+    <section class="block" id="carga">
+      <div class="head"><div><span class="eyebrow">Forma vs fatiga</span><h2>Carga de entrenamiento</h2></div><span class="chip" id="form-chip"></span></div>
+      <div class="legend" id="load-legend"></div>
       <div id="load-chart" class="chart"></div>
-      <p class="note" id="load-note"></p>
-      <p class="fine">Forma (CTL) = media 42 días · Fatiga (ATL) = media 7 días · Frescura (TSB) = forma − fatiga · Carga = duración × intensidad de FC (TRIMP)</p>
+      <p class="fine">Forma (CTL) = media de 42 días · Fatiga (ATL) = media de 7 días · Frescura (TSB) = forma − fatiga · Carga = duración × intensidad de FC (TRIMP)</p>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Tendencias</h2><span class="muted">últimas 4 semanas vs 4 anteriores</span></div>
+    <section class="block" id="progreso">
+      <div class="head"><div><span class="eyebrow">¿Estoy mejorando?</span><h2>Progreso de forma</h2></div></div>
+      <ul class="insights" id="prog-insights"></ul>
+      <div class="preds" id="preds"></div>
+      <div class="grid2">
+        <div class="panel"><div class="ph"><h3>VO₂ máx</h3><span class="big-n" id="vo2-now"></span></div><div id="vo2-chart" class="chart"></div></div>
+        <div class="panel"><div class="ph"><h3 id="eff-title">Ritmo a igual pulso</h3><span class="muted">mediana mensual · arriba = más rápido</span></div><div id="eff-chart" class="chart"></div></div>
+      </div>
+    </section>
+
+    <section class="block" id="recuperacion" hidden>
+      <div class="head"><div><span class="eyebrow">Últimos 90 días</span><h2>Recuperación</h2></div><span class="chip" id="rec-chip"></span></div>
+      <p class="lead" id="rec-note"></p>
+      <div class="rec-stats" id="rec-stats"></div>
+      <div class="panel"><div class="ph"><h3>Variabilidad de la FC (VFC)</h3><span class="muted">noche a noche · franja = tu rango normal · barras = carga del día</span></div><div id="hrv-chart" class="chart"></div></div>
+      <div class="grid2">
+        <div class="panel"><div class="ph"><h3>Sueño</h3><span class="muted">horas por noche · línea = 7 h</span></div><div id="sleep-chart" class="chart"></div></div>
+        <div class="panel"><div class="ph"><h3>FC en reposo</h3><span class="muted">ppm · más bajo = mejor</span></div><div id="rhr-chart" class="chart"></div></div>
+      </div>
+      <ul class="insights" id="rec-insights"></ul>
+    </section>
+
+    <section class="block" id="habitos">
+      <div class="head"><div><span class="eyebrow">Constancia</span><h2>Rachas y hábitos</h2></div></div>
+      <div class="streaks" id="streaks"></div>
+      <div class="grid2">
+        <div class="panel"><div class="ph"><h3>Cuándo entrenas</h3><span class="muted">sesiones por día y hora</span></div><div id="punch" class="chart"></div></div>
+        <div class="panel"><div class="ph"><h3>Días activos por mes</h3><span class="muted">% de días con alguna actividad</span></div><div id="monthly" class="chart"></div></div>
+      </div>
+      <ul class="insights" id="hab-insights"></ul>
+    </section>
+
+    <section class="block" id="analisis">
+      <div class="head"><div><span class="eyebrow">Últimas 4 semanas vs 4 anteriores</span><h2>Tendencias</h2></div></div>
       <div class="trends" id="trends"></div>
-      <p class="note" id="trend-note"></p>
+      <p class="lead" id="trend-note"></p>
+      <div class="grid2">
+        <div class="panel"><div class="ph"><h3>Zonas de FC</h3><span class="muted" id="zone-model"></span></div>
+          <div id="zone-chart" class="chart"></div><div class="zone-split" id="zone-split"></div><div class="zone-keys" id="zone-keys"></div><p class="note" id="zone-note"></p></div>
+        <div class="panel"><div class="ph"><h3>Tirada larga</h3><span class="muted" id="long-peak"></span></div>
+          <div id="long-chart" class="chart"></div><p class="note" id="long-note"></p></div>
+      </div>
+      <div class="panel" id="body-card" hidden><div class="ph"><h3>Composición corporal</h3><span class="muted">media 30 días</span></div>
+        <div class="body-grid" id="body"></div><p class="note" id="body-note"></p></div>
     </section>
 
-    <div class="two">
-      <section class="card">
-        <div class="card-head"><h2>Zonas de FC</h2><span class="muted" id="zone-model"></span></div>
-        <div id="zone-chart" class="chart"></div>
-        <div class="zone-split" id="zone-split"></div>
-        <p class="note" id="zone-note"></p>
-      </section>
-      <section class="card">
-        <div class="card-head"><h2>Tirada larga</h2><span class="muted" id="long-peak"></span></div>
-        <div id="long-chart" class="chart"></div>
-        <p class="note" id="long-note"></p>
-      </section>
-    </div>
-
-    <section class="card" id="body-card" hidden>
-      <div class="card-head"><h2>Composición corporal</h2><span class="muted">media 30 días</span></div>
-      <div class="body-grid" id="body"></div>
-      <p class="note" id="body-note"></p>
-    </section>
-
-    <section class="card">
-      <div class="card-head"><h2>Semanas</h2><span class="muted">más reciente primero</span></div>
+    <section class="block" id="semanas">
+      <div class="head"><div><span class="eyebrow">Más reciente primero</span><h2>Semanas</h2></div></div>
       <div class="weeks" id="weeks"></div>
       <button class="more" id="weeks-more">Ver más semanas</button>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Actividades</h2><span class="muted" id="act-count"></span></div>
+    <section class="block" id="actividades">
+      <div class="head"><div><span class="eyebrow" id="act-count"></span><h2>Actividades</h2></div></div>
       <div class="filters" id="filters"></div>
       <div id="acts"></div>
       <button class="more" id="acts-more">Cargar más</button>

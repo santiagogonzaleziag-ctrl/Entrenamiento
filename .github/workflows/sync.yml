@@ -23,6 +23,7 @@ jobs:
     env:
       GARMINTOKENS: ${{ github.workspace }}/.garmin-tokens
       DASHBOARD_TZ: Europe/Madrid
+      PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data.json
     steps:
       - uses: actions/checkout@v4
 

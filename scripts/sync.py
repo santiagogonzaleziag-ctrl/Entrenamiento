@@ -7,6 +7,9 @@ Uso:
 Tokens: se leen de la carpeta GARMINTOKENS (por defecto ~/.garminconnect).
 Si existe la variable GARMIN_TOKENS (base64 de garmin_tokens.json) y la
 carpeta no tiene tokens, se usan para sembrarla.
+
+Si existe PAGES_URL (la URL pública de data.json), se reutiliza el historial
+ya publicado para no volver a pedir a Garmin días que ya tenemos.
 """
 
 from __future__ import annotations
@@ -18,15 +21,20 @@ import math
 import os
 import random
 import sys
-from collections import defaultdict
+import time
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "site" / "data.json"
 TZ = ZoneInfo(os.getenv("DASHBOARD_TZ", "Europe/Madrid"))
+RECOVERY_DAYS = 90
+
+DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 # --------------------------------------------------------------------------
 # Tipos de actividad → nombre visible y familia
@@ -77,6 +85,41 @@ def type_info(key: str) -> tuple[str, str]:
 
 
 # --------------------------------------------------------------------------
+# Utilidades
+# --------------------------------------------------------------------------
+def safe(fn, *args, default=None):
+    try:
+        return fn(*args)
+    except Exception as exc:  # noqa: BLE001 — una métrica rota no debe tumbar todo
+        print(f"  · {getattr(fn, '__name__', fn)}{args}: {exc}", file=sys.stderr)
+        return default
+
+
+def load_previous() -> dict:
+    """Lee el data.json ya publicado para reutilizar el historial."""
+    url = os.getenv("PAGES_URL")
+    if not url:
+        return {}
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            prev = json.loads(r.read())
+        if prev.get("demo"):
+            return {}
+        print("✓ Historial previo cargado")
+        return prev
+    except Exception as exc:  # noqa: BLE001
+        print(f"  · sin historial previo: {exc}", file=sys.stderr)
+        return {}
+
+
+def round_or_none(v, nd=1):
+    return round(v, nd) if isinstance(v, (int, float)) else None
+
+
+# --------------------------------------------------------------------------
 # Descarga desde Garmin
 # --------------------------------------------------------------------------
 def tokenstore_dir() -> Path:
@@ -90,15 +133,28 @@ def tokenstore_dir() -> Path:
     return path
 
 
-def safe(fn, *args, default=None):
-    try:
-        return fn(*args)
-    except Exception as exc:  # noqa: BLE001 — una métrica rota no debe tumbar todo
-        print(f"  · {getattr(fn, '__name__', fn)}{args}: {exc}", file=sys.stderr)
-        return default
+def recovery_day(client, d: str) -> dict:
+    sl = safe(client.get_sleep_data, d, default={}) or {}
+    dto = sl.get("dailySleepDTO") or {}
+    hrv = safe(client.get_hrv_data, d, default={}) or {}
+    hs = (hrv or {}).get("hrvSummary") or {}
+    base = hs.get("baseline") or {}
+    secs = dto.get("sleepTimeSeconds")
+    deep = dto.get("deepSleepSeconds")
+    return {
+        "date": d,
+        "sleepH": round(secs / 3600, 2) if secs else None,
+        "deepH": round(deep / 3600, 2) if deep else None,
+        "sleepScore": ((dto.get("sleepScores") or {}).get("overall") or {}).get("value"),
+        "hrv": hs.get("lastNightAvg") or sl.get("avgOvernightHrv"),
+        "hrvLow": base.get("balancedLow"),
+        "hrvHigh": base.get("balancedUpper"),
+        "rhr": sl.get("restingHeartRate"),
+        "bb": sl.get("bodyBatteryChange"),
+    }
 
 
-def fetch_garmin(start: date, today: date) -> dict:
+def fetch_garmin(start: date, today: date, prev: dict) -> dict:
     from garminconnect import Garmin
 
     store = tokenstore_dir()
@@ -107,7 +163,6 @@ def fetch_garmin(start: date, today: date) -> dict:
     print("✓ Sesión de Garmin abierta")
 
     activities = []
-    # Por bloques de ~3 meses para no pedir demasiado de golpe
     cursor = start
     while cursor <= today:
         block_end = min(cursor + timedelta(days=90), today)
@@ -121,7 +176,6 @@ def fetch_garmin(start: date, today: date) -> dict:
             uniq.append(a)
     print(f"✓ {len(uniq)} actividades")
 
-    # Zonas de FC: vienen en el resumen (hrTimeInZone_N); si faltan, pedirlas
     missing = [a for a in uniq if a.get("averageHR") and "hrTimeInZone_1" not in a]
     for a in missing[-60:]:
         zones = safe(client.get_activity_hr_in_timezones, a["activityId"], default=[]) or []
@@ -130,14 +184,11 @@ def fetch_garmin(start: date, today: date) -> dict:
 
     today_s = today.isoformat()
     summary = safe(client.get_user_summary, today_s, default={}) or {}
-    sleep = safe(client.get_sleep_data, today_s, default={}) or {}
-    maxm = safe(client.get_max_metrics, today_s, default=[]) or []
 
-    # VO2 máx: puede no venir hoy; buscar hacia atrás unos días
     vo2 = None
     for back in range(0, 14):
         d = (today - timedelta(days=back)).isoformat()
-        mm = maxm if back == 0 else (safe(client.get_max_metrics, d, default=[]) or [])
+        mm = safe(client.get_max_metrics, d, default=[]) or []
         if isinstance(mm, dict):
             mm = [mm]
         for m in mm:
@@ -148,24 +199,46 @@ def fetch_garmin(start: date, today: date) -> dict:
         if vo2:
             break
 
-    body = safe(
-        client.get_body_composition, (today - timedelta(days=90)).isoformat(), today_s, default={}
-    ) or {}
+    # Recuperación: solo pedimos los días que no estaban ya publicados
+    known = {d["date"]: d for d in (prev.get("recovery") or {}).get("days", [])}
+    recovery, fetched = [], 0
+    for back in range(RECOVERY_DAYS - 1, -1, -1):
+        d = (today - timedelta(days=back)).isoformat()
+        if d in known and back > 1:
+            recovery.append(known[d])
+            continue
+        recovery.append(recovery_day(client, d))
+        fetched += 1
+        time.sleep(0.25)
+    print(f"✓ Recuperación: {fetched} días descargados, {RECOVERY_DAYS - fetched} reutilizados")
 
-    sleep_dto = (sleep or {}).get("dailySleepDTO") or {}
-    scores = (sleep_dto.get("sleepScores") or {}).get("overall") or {}
+    rp = safe(client.get_race_predictions, default=None)
+    if isinstance(rp, list):
+        rp = rp[-1] if rp else None
+    preds = None
+    if isinstance(rp, dict):
+        preds = {k: rp.get(f) for k, f in
+                 [("5K", "time5K"), ("10K", "time10K"), ("half", "timeHalfMarathon"), ("full", "timeMarathon")]}
+        if not any(preds.values()):
+            preds = None
+
+    body = safe(client.get_body_composition, (today - timedelta(days=90)).isoformat(), today_s, default={}) or {}
+    last = recovery[-1] if recovery else {}
 
     return {
         "activities": uniq,
         "today": {
-            "restingHR": summary.get("restingHeartRate"),
+            "restingHR": summary.get("restingHeartRate") or last.get("rhr"),
             "steps": summary.get("totalSteps"),
             "bodyBattery": summary.get("bodyBatteryMostRecentValue"),
             "stress": summary.get("averageStressLevel"),
-            "sleepSeconds": sleep_dto.get("sleepTimeSeconds"),
-            "sleepScore": scores.get("value"),
+            "sleepSeconds": (last.get("sleepH") or 0) * 3600 or None,
+            "sleepScore": last.get("sleepScore"),
+            "hrv": last.get("hrv"),
             "vo2max": vo2,
         },
+        "recovery": recovery,
+        "predictions": preds,
         "body": [
             {
                 "date": w.get("calendarDate"),
@@ -183,15 +256,16 @@ def fetch_garmin(start: date, today: date) -> dict:
 # --------------------------------------------------------------------------
 # Datos de ejemplo (mismo formato que devuelve Garmin)
 # --------------------------------------------------------------------------
-def fetch_demo(start: date, today: date) -> dict:
+def fetch_demo(start: date, today: date, prev: dict) -> dict:
     rnd = random.Random(42)
     acts, aid = [], 1000
     d = start
     places = ["Sevilla", "Dos Hermanas", "Alcalá", "Guadaíra", "Parque del Alamillo", "Doñana"]
     while d <= today:
         week = d.isocalendar().week
-        build = 0.6 + 0.4 * math.sin(week / 4)  # bloques de carga
+        build = 0.6 + 0.4 * math.sin(week / 4)
         dow = d.weekday()
+        progress = (d - start).days / 365
         plan = []
         if dow in (0, 3) and rnd.random() < 0.85:
             plan.append(("running", 35 + rnd.randint(0, 25), "easy"))
@@ -213,14 +287,14 @@ def fetch_demo(start: date, today: date) -> dict:
         for i, (key, mins, kind) in enumerate(plan):
             aid += 1
             secs = mins * 60
-            pace = {"easy": 6.2, "tempo": 5.2, "long": 6.5}.get(kind, 0)  # min/km
+            pace = {"easy": 6.2, "tempo": 5.2, "long": 6.5}.get(kind, 0)
             if key == "trail_running":
                 pace += 1.4
-            hr = {"easy": 138, "tempo": 158, "long": 145, "gym": 112, "swim": 128,
+            hr = {"easy": 140, "tempo": 158, "long": 146, "gym": 112, "swim": 128,
                   "hike": 115, "mind": 85, "bike": 132}[kind] + rnd.randint(-6, 6)
             dist = 0
             if pace:
-                pace *= 1 - 0.05 * (d - start).days / 365  # mejora de forma
+                pace *= 1 - 0.06 * progress
                 dist = mins / pace * 1000
             elif key == "lap_swimming":
                 dist = mins * 33
@@ -233,13 +307,14 @@ def fetch_demo(start: date, today: date) -> dict:
                 "long": [0.05, 0.5, 0.35, 0.1, 0], "swim": [0.2, 0.6, 0.2, 0, 0],
                 "hike": [0.5, 0.45, 0.05, 0, 0], "bike": [0.15, 0.55, 0.25, 0.05, 0],
             }.get(kind)
+            hour = rnd.choice([7, 7, 8, 19, 19, 20]) if dow < 5 else rnd.choice([8, 9, 10])
             a = {
                 "activityId": aid,
                 "activityName": {
                     "running": f"{rnd.choice(places)} Carrera", "trail_running": f"{rnd.choice(places)} Trail",
                     "hiking": f"{rnd.choice(places)} Senderismo", "road_biking": f"{rnd.choice(places)} Ciclismo",
                 }.get(key, type_info(key)[0]),
-                "startTimeLocal": f"{d.isoformat()} {7 + i * 10 + rnd.randint(0, 2):02d}:{rnd.randint(0, 59):02d}:00",
+                "startTimeLocal": f"{d.isoformat()} {min(23, hour + i):02d}:{rnd.randint(0, 59):02d}:00",
                 "activityType": {"typeKey": key},
                 "duration": secs,
                 "distance": dist,
@@ -248,11 +323,30 @@ def fetch_demo(start: date, today: date) -> dict:
                 "maxHR": hr + 20,
                 "calories": mins * (9 if kind in ("easy", "tempo", "long") else 6),
             }
+            if key in ("running", "treadmill_running", "trail_running"):
+                a["vO2MaxValue"] = round(49 + 3.5 * progress + rnd.uniform(-0.4, 0.4))
             if zones and a["averageHR"]:
                 for z, f in enumerate(zones, 1):
                     a[f"hrTimeInZone_{z}"] = secs * f
             acts.append(a)
         d += timedelta(days=1)
+
+    recovery = []
+    for back in range(RECOVERY_DAYS - 1, -1, -1):
+        dd = today - timedelta(days=back)
+        hard = sum(1 for a in acts if a["startTimeLocal"][:10] == (dd - timedelta(days=1)).isoformat()
+                   and (a.get("averageHR") or 0) > 150)
+        sleep = rnd.uniform(6.0, 8.3) - (0.3 if dd.weekday() == 6 else 0)
+        recovery.append({
+            "date": dd.isoformat(),
+            "sleepH": round(sleep, 2),
+            "deepH": round(sleep * rnd.uniform(0.14, 0.22), 2),
+            "sleepScore": int(max(45, min(96, 55 + (sleep - 6) * 14 + rnd.randint(-6, 6)))),
+            "hrv": int(58 + 6 * math.sin(back / 9) - hard * 7 + rnd.randint(-4, 4) + (90 - back) * 0.04),
+            "hrvLow": 52, "hrvHigh": 68,
+            "rhr": int(51 + hard * 2 + rnd.randint(-1, 2) - (90 - back) * 0.01),
+            "bb": int(35 + (sleep - 6) * 15 + rnd.randint(-8, 8)),
+        })
 
     body = []
     w, bf, mm = 74.5, 16.2, 59.8
@@ -260,14 +354,18 @@ def fetch_demo(start: date, today: date) -> dict:
         if rnd.random() < 0.6:
             body.append({
                 "date": (today - timedelta(days=back)).isoformat(),
-                "weight": round(w + rnd.uniform(-0.6, 0.6) - back * -0.004, 1),
+                "weight": round(w + rnd.uniform(-0.6, 0.6) - (90 - back) * 0.006, 1),
                 "bodyFat": round(bf + rnd.uniform(-0.4, 0.4) - (90 - back) * 0.008, 1),
                 "muscle": round(mm + rnd.uniform(-0.3, 0.3) + (90 - back) * 0.004, 1),
             })
+    last = recovery[-1]
     return {
         "activities": acts,
-        "today": {"restingHR": 51, "steps": 8423, "bodyBattery": 64, "stress": 29,
-                  "sleepSeconds": 7 * 3600 + 24 * 60, "sleepScore": 82, "vo2max": 52.4},
+        "today": {"restingHR": last["rhr"], "steps": 8423, "bodyBattery": 64, "stress": 29,
+                  "sleepSeconds": last["sleepH"] * 3600, "sleepScore": last["sleepScore"],
+                  "hrv": last["hrv"], "vo2max": 52.4},
+        "recovery": recovery,
+        "predictions": {"5K": 22 * 60 + 41, "10K": 47 * 60 + 12, "half": 1 * 3600 + 44 * 60 + 30, "full": 3 * 3600 + 41 * 60 + 5},
         "body": body,
         "name": "Demo",
     }
@@ -305,6 +403,7 @@ def normalize(raw: list[dict]) -> list[dict]:
             "maxHr": round(a["maxHR"]) if a.get("maxHR") else None,
             "kcal": round(a.get("calories") or 0),
             "zones": zones if sum(zones) else None,
+            "vo2": a.get("vO2MaxValue"),
         })
     out.sort(key=lambda x: (x["date"], x["time"]))
     return out
@@ -313,7 +412,7 @@ def normalize(raw: list[dict]) -> list[dict]:
 def trimp(a: dict, rest: float, hrmax: float) -> float:
     """Carga Banister: minutos × reserva de FC × factor exponencial."""
     if not a["hr"]:
-        return a["min"] * 0.25  # yoga, fuerza sin pulso…: algo de carga
+        return a["min"] * 0.25
     x = max(0.0, min(1.0, (a["hr"] - rest) / max(1, hrmax - rest)))
     return a["min"] * x * 0.64 * math.exp(1.92 * x)
 
@@ -357,15 +456,20 @@ def fmt_pace(min_per_km: float | None) -> str | None:
     return f"{m}:{s:02d}"
 
 
+def fmt_secs(s: float) -> str:
+    s = round(s)
+    h, r = divmod(s, 3600)
+    m, s = divmod(r, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
 def window_stats(acts: list[dict], days: int) -> dict:
     weeks = days / 7
     runs = [a for a in acts if a["family"] == "run" and a["km"] > 0.5]
     run_min = sum(a["min"] for a in runs)
     run_km = sum(a["km"] for a in runs)
     hr_runs = [a for a in runs if a["hr"]]
-    eff = (
-        mean((a["km"] * 1000 / a["min"]) / a["hr"] for a in hr_runs) if hr_runs else None
-    )
+    eff = mean((a["km"] * 1000 / a["min"]) / a["hr"] for a in hr_runs) if hr_runs else None
     hr_acts = [a for a in acts if a["hr"]]
     by_type = defaultdict(float)
     for a in acts:
@@ -524,7 +628,218 @@ def body_summary(body: list[dict], today: date) -> dict | None:
     return out
 
 
-def build(data: dict, today: date, start: date, demo: bool) -> dict:
+# ---------- Nuevos bloques ----------
+def habits(acts: list[dict], weeks: list[dict], today: date) -> dict:
+    year = str(today.year)
+    active = {a["date"] for a in acts}
+    d = today if today.isoformat() in active else today - timedelta(days=1)
+    streak = 0
+    while d.isoformat() in active:
+        streak += 1
+        d -= timedelta(days=1)
+
+    longest = cur = 0
+    best_end, prev_d = None, None
+    for s in sorted(x for x in active if x[:4] == year):
+        dd = date.fromisoformat(s)
+        cur = cur + 1 if prev_d and (dd - prev_d).days == 1 else 1
+        if cur > longest:
+            longest, best_end = cur, s
+        prev_d = dd
+
+    yacts = [a for a in acts if a["date"][:4] == year]
+    weekday = [0.0] * 7
+    punch = [[0] * 24 for _ in range(7)]
+    hours = [0] * 24
+    for a in yacts:
+        dd = date.fromisoformat(a["date"])
+        h = int(a["time"][:2])
+        weekday[dd.weekday()] += a["min"]
+        punch[dd.weekday()][h] += 1
+        hours[h] += 1
+
+    monthly = []
+    for m in range(1, today.month + 1):
+        first = date(today.year, m, 1)
+        last = (date(today.year + (m == 12), m % 12 + 1, 1) - timedelta(days=1))
+        last = min(last, today)
+        ndays = (last - first).days + 1
+        act_days = len({x for x in active if x[:7] == f"{year}-{m:02d}"})
+        mins = sum(a["min"] for a in yacts if a["date"][:7] == f"{year}-{m:02d}")
+        monthly.append({"month": MESES[m - 1], "active": act_days, "days": ndays,
+                        "pct": round(act_days / ndays * 100), "hours": round(mins / 60, 1)})
+
+    full_weeks = [w for w in weeks if date.fromisoformat(w["start"]) + timedelta(days=6) <= today]
+    goal_weeks = sum(1 for w in full_weeks if w["sessions"] >= 3)
+    run_weeks = 0
+    for w in reversed(full_weeks):
+        if w["sessions"] >= 3:
+            run_weeks += 1
+        else:
+            break
+
+    fav_day = DIAS[max(range(7), key=lambda i: weekday[i])] if any(weekday) else None
+    quiet_day = DIAS[min(range(7), key=lambda i: weekday[i])] if any(weekday) else None
+    buckets = {"de madrugada": range(0, 7), "por la mañana": range(7, 12), "a mediodía": range(12, 16),
+               "por la tarde": range(16, 20), "por la noche": range(20, 24)}
+    when = max(buckets, key=lambda b: sum(hours[h] for h in buckets[b])) if any(hours) else None
+    when_pct = round(sum(hours[h] for h in buckets[when]) / sum(hours) * 100) if when else 0
+    sports = Counter(a["label"] for a in yacts)
+    fav_sport = sports.most_common(1)[0] if sports else None
+
+    days_so_far = (today - date(today.year, 1, 1)).days + 1
+    active_year = len({x for x in active if x[:4] == year})
+
+    insights = []
+    if when:
+        insights.append(f"Entrenas sobre todo {when} ({when_pct}% de las sesiones).")
+    if fav_day:
+        insights.append(f"Tu día fuerte es el {fav_day}; el más tranquilo, el {quiet_day}.")
+    if full_weeks:
+        insights.append(f"{goal_weeks} de {len(full_weeks)} semanas con 3 o más sesiones "
+                        f"({round(goal_weeks / len(full_weeks) * 100)}%).")
+    if fav_sport:
+        insights.append(f"Deporte más frecuente: {fav_sport[0].lower()} ({fav_sport[1]} sesiones).")
+
+    return {
+        "streak": streak, "longest": longest, "longestEnd": best_end,
+        "activeDays": active_year, "daysSoFar": days_so_far,
+        "weekStreak": run_weeks, "goalWeeks": goal_weeks, "fullWeeks": len(full_weeks),
+        "weekday": [round(m) for m in weekday], "punch": punch, "monthly": monthly,
+        "insights": insights,
+    }
+
+
+def progress(acts: list[dict], data: dict, prev: dict, today: date) -> dict:
+    # VO2 máx: lo que Garmin estima en cada carrera
+    vo2_by_day = {}
+    for a in acts:
+        if a.get("vo2"):
+            vo2_by_day[a["date"]] = a["vo2"]
+    if data["today"].get("vo2max"):
+        vo2_by_day[today.isoformat()] = data["today"]["vo2max"]
+    vo2 = [{"date": k, "v": v} for k, v in sorted(vo2_by_day.items()) if k >= f"{today.year - 1}-12-01"]
+
+    # Ritmo a igual pulso: carreras en llano con FC media
+    runs = [a for a in acts if a["family"] == "run" and a["type"] != "trail_running"
+            and a["hr"] and a["km"] >= 2 and a["min"] >= 12]
+    ref = int(round(median(a["hr"] for a in runs) / 5) * 5) if runs else 150
+    by_month = defaultdict(list)
+    for a in runs:
+        by_month[a["date"][:7]].append((a["km"] * 1000 / a["min"]) / a["hr"])
+    eff = []
+    for m in sorted(by_month):
+        if m[:4] != str(today.year) and m != f"{today.year - 1}-12":
+            continue
+        e = median(by_month[m])
+        eff.append({"month": m, "label": MESES[int(m[5:]) - 1], "pace": round(1000 / (e * ref), 3),
+                    "n": len(by_month[m])})
+
+    preds = data.get("predictions")
+    hist = [h for h in (prev.get("progress") or {}).get("predHistory", []) if h.get("date") != today.isoformat()]
+    if preds:
+        hist.append({"date": today.isoformat(), **preds})
+    hist = hist[-400:]
+    ago = None
+    for h in reversed(hist):
+        if h["date"] <= (today - timedelta(days=30)).isoformat():
+            ago = h
+            break
+
+    pred_cards = []
+    if preds:
+        for k, label, km in [("5K", "5 km", 5), ("10K", "10 km", 10), ("half", "Media", 21.0975), ("full", "Maratón", 42.195)]:
+            if preds.get(k):
+                delta = (preds[k] - ago[k]) if ago and ago.get(k) else None
+                pred_cards.append({"key": k, "label": label, "secs": preds[k], "time": fmt_secs(preds[k]),
+                                   "pace": fmt_pace(preds[k] / 60 / km), "delta": delta})
+
+    insights = []
+    if len(vo2) >= 2:
+        first = next((x for x in vo2 if x["date"][:4] == str(today.year)), vo2[0])
+        dv = vo2[-1]["v"] - first["v"]
+        if abs(dv) >= 0.5:
+            insights.append(f"VO₂ máx {'+' if dv > 0 else ''}{dv:.1f} desde {MESES[int(first['date'][5:7]) - 1]}.")
+        else:
+            insights.append("VO₂ máx estable en lo que va de año.")
+    if len(eff) >= 2:
+        diff = (eff[0]["pace"] - eff[-1]["pace"]) * 60
+        if diff > 3:
+            insights.append(f"A {ref} ppm corres {round(diff)} s/km más rápido que en {eff[0]['label']}: mejor base aeróbica.")
+        elif diff < -3:
+            insights.append(f"A {ref} ppm vas {round(-diff)} s/km más lento que en {eff[0]['label']}. Calor, fatiga o pérdida de base.")
+        else:
+            insights.append(f"Ritmo a {ref} ppm estable desde {eff[0]['label']}.")
+    if pred_cards and pred_cards[0]["delta"] is not None:
+        d = pred_cards[0]["delta"]
+        if abs(d) >= 5:
+            insights.append(f"Predicción de 5 km {'mejora' if d < 0 else 'empeora'} {abs(round(d))} s en 30 días.")
+
+    return {"vo2": vo2, "refHr": ref, "efficiency": eff, "predictions": pred_cards,
+            "predHistory": hist, "insights": insights}
+
+
+def recovery_block(days: list[dict], series: list[dict]) -> dict | None:
+    days = [d for d in days if any(d.get(k) for k in ("hrv", "sleepH", "rhr"))]
+    if not days:
+        return None
+    load = {s["date"]: s["load"] for s in series}
+    for d in days:
+        d["load"] = load.get(d["date"], 0)
+
+    def avg(rows, k):
+        vals = [r[k] for r in rows if r.get(k)]
+        return mean(vals) if vals else None
+
+    last7, base = days[-7:], days[-37:-7] or days[:-7]
+    out = {"days": days}
+    for k in ("hrv", "rhr", "sleepH", "sleepScore", "bb"):
+        a, b = avg(base, k), avg(last7, k)
+        out[k] = {"avg7": round_or_none(b), "avg30": round_or_none(a),
+                  "pct": round((b - a) / a * 100) if a and b else None}
+
+    hrv_pct = out["hrv"]["pct"] or 0
+    rhr_d = (out["rhr"]["avg7"] or 0) - (out["rhr"]["avg30"] or 0)
+    if hrv_pct <= -7 or rhr_d >= 3:
+        state, note = "Atención", "Tu VFC baja o tu pulso en reposo sube respecto a tu normalidad. Prioriza sueño y días suaves."
+    elif hrv_pct >= 4 and rhr_d <= 0:
+        state, note = "Óptima", "VFC por encima de tu media y pulso en reposo controlado: buen momento para apretar."
+    else:
+        state, note = "Normal", "Indicadores dentro de tu rango habitual. Sigue con el plan."
+    out["state"], out["note"] = state, note
+
+    insights = []
+    loads = sorted(d["load"] for d in days if d["load"] > 0)
+    if len(loads) >= 8:
+        p75 = loads[int(len(loads) * 0.75)]
+        by_date = {d["date"]: d for d in days}
+        after_hard, after_easy = [], []
+        for d in days:
+            prev_d = (date.fromisoformat(d["date"]) - timedelta(days=1)).isoformat()
+            p = by_date.get(prev_d)
+            if p and d.get("hrv"):
+                (after_hard if p["load"] >= p75 else after_easy).append(d["hrv"])
+        if len(after_hard) >= 3 and after_easy:
+            diff = (mean(after_hard) - mean(after_easy)) / mean(after_easy) * 100
+            if diff <= -3:
+                insights.append(f"Tras tus días de más carga, tu VFC cae un {abs(round(diff))}% la noche siguiente.")
+            else:
+                insights.append("Tu VFC aguanta bien los días de carga alta: buena capacidad de recuperación.")
+    short = [d for d in days if d.get("sleepH") and d["sleepH"] < 6.5 and d.get("rhr")]
+    longs = [d for d in days if d.get("sleepH") and d["sleepH"] >= 7.5 and d.get("rhr")]
+    if len(short) >= 3 and len(longs) >= 3:
+        diff = mean(d["rhr"] for d in short) - mean(d["rhr"] for d in longs)
+        if diff >= 1:
+            insights.append(f"Las noches de menos de 6 h 30 min tu pulso en reposo es {diff:.1f} ppm más alto.")
+    sleeps = [d["sleepH"] for d in days[-30:] if d.get("sleepH")]
+    if sleeps:
+        under7 = sum(1 for s in sleeps if s < 7)
+        insights.append(f"{under7} de las últimas {len(sleeps)} noches dormiste menos de 7 h.")
+    out["insights"] = insights
+    return out
+
+
+def build(data: dict, today: date, start: date, demo: bool, prev: dict) -> dict:
     acts = normalize(data["activities"])
     year_start = date(today.year, 1, 1)
     rest = data["today"].get("restingHR") or 55
@@ -544,9 +859,11 @@ def build(data: dict, today: date, start: date, demo: bool) -> dict:
             d["min"] = round(d["min"] + a["min"], 1)
             d["types"].append(a["label"])
 
-    first_week = monday(year_start)
-    weeks = weekly(acts, first_week, today, rest, hrmax)
+    weeks = weekly(acts, monday(year_start), today, rest, hrmax)
     year_acts = [a for a in acts if a["date"] >= year_start.isoformat()]
+    for a in acts:
+        if not a.get("vo2"):
+            a.pop("vo2", None)
 
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -571,6 +888,9 @@ def build(data: dict, today: date, start: date, demo: bool) -> dict:
         "trends": trends(acts, today),
         "zones": zone_summary(weeks),
         "weeks": weeks,
+        "progress": progress(acts, data, prev, today),
+        "recovery": recovery_block(data.get("recovery") or [], series),
+        "habits": habits(acts, weeks, today),
         "body": body_summary(data.get("body") or [], today),
         "activities": list(reversed(year_acts)),
     }
@@ -584,8 +904,9 @@ def main() -> None:
     today = datetime.now(TZ).date()
     start = date(today.year, 1, 1) - timedelta(days=70)  # calentamiento para CTL
 
-    data = fetch_demo(start, today) if args.demo else fetch_garmin(start, today)
-    result = build(data, today, start, args.demo)
+    prev = {} if args.demo else load_previous()
+    data = fetch_demo(start, today, prev) if args.demo else fetch_garmin(start, today, prev)
+    result = build(data, today, start, args.demo, prev)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
