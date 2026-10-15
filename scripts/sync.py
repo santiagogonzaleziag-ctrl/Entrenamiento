@@ -200,7 +200,9 @@ def fetch_garmin(start: date, today: date, prev: dict) -> dict:
             break
 
     # Recuperación: solo pedimos los días que no estaban ya publicados
-    known = {d["date"]: d for d in (prev.get("recovery") or {}).get("days", [])}
+    # Solo se reutilizan días con datos; los vacíos (p. ej. por un 429) se reintentan
+    known = {d["date"]: d for d in (prev.get("recovery") or {}).get("days", [])
+             if any(d.get(k) for k in ("hrv", "sleepH", "rhr"))}
     recovery, fetched = [], 0
     for back in range(RECOVERY_DAYS - 1, -1, -1):
         d = (today - timedelta(days=back)).isoformat()
