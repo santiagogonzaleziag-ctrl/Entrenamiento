@@ -4,3 +4,4 @@ site/data.json
 garmin_tokens.json
 __pycache__/
 .venv/
+.garmin-cache/

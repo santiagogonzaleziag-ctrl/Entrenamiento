@@ -35,30 +35,55 @@ jobs:
 
       # Los tokens de Garmin se refrescan solos; guardamos la versión más
       # reciente en la caché de Actions (privada) para la siguiente ejecución.
-      - name: Restaurar tokens
+      # En la caché solo se guarda una copia CIFRADA con el propio secreto,
+      # así nadie sin acceso a los secretos del repo puede leerla.
+      - name: Restaurar tokens cifrados
         uses: actions/cache/restore@v4
         with:
-          path: .garmin-tokens
-          key: garmin-tokens-${{ github.run_id }}
-          restore-keys: garmin-tokens-
+          path: .garmin-cache
+          key: garmin-enc-${{ github.run_id }}
+          restore-keys: garmin-enc-
+
+      - name: Descifrar tokens
+        env:
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+        run: |
+          if [ -n "$GARMIN_TOKENS" ] && [ -f .garmin-cache/tokens.enc ]; then
+            mkdir -p .garmin-tokens
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass env:GARMIN_TOKENS \
+              -in .garmin-cache/tokens.enc -out .garmin-tokens/garmin_tokens.json \
+              || rm -f .garmin-tokens/garmin_tokens.json   # secreto cambiado: se usa el nuevo
+          fi
 
       - name: Descargar datos
         env:
           GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
         run: |
-          if [ -z "$GARMIN_TOKENS" ] && [ ! -f .garmin-tokens/garmin_tokens.json ]; then
+          if [ -z "$GARMIN_TOKENS" ]; then
             echo "::warning::No hay secreto GARMIN_TOKENS: publicando datos de ejemplo."
             python scripts/sync.py --demo
           else
             python scripts/sync.py
           fi
 
-      - name: Guardar tokens refrescados
-        if: always() && hashFiles('.garmin-tokens/garmin_tokens.json') != ''
+      - name: Cifrar tokens refrescados
+        if: always()
+        env:
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+        run: |
+          if [ -n "$GARMIN_TOKENS" ] && [ -f .garmin-tokens/garmin_tokens.json ]; then
+            mkdir -p .garmin-cache
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:GARMIN_TOKENS \
+              -in .garmin-tokens/garmin_tokens.json -out .garmin-cache/tokens.enc
+          fi
+          rm -rf .garmin-tokens
+
+      - name: Guardar tokens cifrados
+        if: always() && hashFiles('.garmin-cache/tokens.enc') != ''
         uses: actions/cache/save@v4
         with:
-          path: .garmin-tokens
-          key: garmin-tokens-${{ github.run_id }}
+          path: .garmin-cache
+          key: garmin-enc-${{ github.run_id }}
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
