@@ -213,7 +213,6 @@
     { l: 'VFC anoche', v: S.hrv, u: 'ms', c: 'var(--recovery)', sp: lastN('hrv'), sub: R?.hrv?.avg7 ? `media 7 d: ${R.hrv.avg7}` : '' },
     { l: 'FC reposo', v: S.restingHR, u: 'ppm', c: 'var(--bad)', sp: lastN('rhr'), sub: R?.rhr?.avg7 ? `media 7 d: ${R.rhr.avg7}` : '' },
     { l: 'Sueño', v: S.sleepSeconds ? S.sleepSeconds / 3600 : null, hm: true, c: 'var(--recovery)', sp: lastN('sleepH'), sub: S.sleepScore ? `puntuación ${S.sleepScore}` : '' },
-    { l: 'Racha semanal', v: HB?.weekStreak, u: 'sem', c: 'var(--gold)', sub: HB ? `esta semana: ${HB.thisWeek ?? 0} de 3 sesiones` : '' },
     { l: `Horas ${D.year}`, v: T.hours, u: 'h', c: 'var(--effort)', sub: `${T.activities} sesiones · ${T.km.toLocaleString('es-ES')} km` },
   ].filter((m) => m.v != null);
   $('strip').innerHTML = metrics.map((m, i) => `<div class="metric"><span>${m.l}</span><b data-i="${i}"></b><em>${esc(m.sub)}</em>${m.sp ? spark(m.sp, m.c) : ''}</div>`).join('');

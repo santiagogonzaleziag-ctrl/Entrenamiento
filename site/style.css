@@ -77,15 +77,15 @@ h1 .yr { display: block; font-size: 0.42em; font-style: normal; letter-spacing: 
 .snum small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 @media (max-width: 760px) { .status { grid-template-columns: 1fr; } }
 
-.strip { margin-top: 12px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.strip { margin-top: 12px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
 .metric { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 10px; min-width: 0; position: relative; overflow: hidden; }
 .metric span { font: 600 11.5px var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .metric b { display: block; font: 700 34px/1.05 var(--display); margin-top: 4px; font-variant-numeric: tabular-nums; }
 .metric b small { font-size: 15px; color: var(--muted); font-weight: 600; margin-left: 2px; }
 .metric em { font-style: normal; font-size: 12px; color: var(--muted); }
 .metric svg { display: block; width: 100%; height: 28px; margin-top: 6px; }
-@media (max-width: 900px) { .strip { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 480px) { .strip { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .strip { grid-template-columns: repeat(3, 1fr); } .strip .metric:last-child { grid-column: span 2; } }
+@media (max-width: 480px) { .strip { grid-template-columns: repeat(2, 1fr); } .strip .metric:last-child { grid-column: span 2; } }
 
 /* Bloques */
 .block { margin-top: 56px; }
