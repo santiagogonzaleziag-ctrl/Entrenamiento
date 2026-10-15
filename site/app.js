@@ -291,7 +291,7 @@
       const dh = d != null && Math.abs(d) >= 1 ? `<span class="d ${d < 0 ? 'up' : 'down'}">${d < 0 ? '−' : '+'}${Math.abs(Math.round(d))} s</span>` : '';
       return `<div class="pred"><span>${p.label}</span><b>${p.time}</b><small>${p.pace}/km${dh}</small></div>`;
     }).join('');
-    if (!PG.predictions.length) $('preds').hidden = true;
+    if (!PG.predictions.length) { $('preds').hidden = true; $('preds-head').hidden = true; }
 
     const wk = {};
     PG.vo2.forEach((p) => { const d = new Date(p.date + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); wk[d.toISOString().slice(0, 10)] = p; });

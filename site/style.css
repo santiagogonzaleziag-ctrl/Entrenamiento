@@ -106,6 +106,7 @@ h3 { font: 700 18px var(--display); text-transform: uppercase; letter-spacing: 0
 .insights { list-style: none; padding: 0; margin: 14px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .insights li { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 14.5px; line-height: 1.45; }
 #prog-insights { margin: 0 0 12px; }
+.sub-h { margin: 22px 0 10px; }
 
 /* Heatmap */
 #actividad .head { margin-bottom: 10px; }
