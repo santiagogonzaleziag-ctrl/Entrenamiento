@@ -224,6 +224,22 @@ def fetch_garmin(start: date, today: date, prev: dict) -> dict:
         if not any(preds.values()):
             preds = None
 
+    # Historial de predicciones: se rellena una vez desde Garmin (después se va acumulando solo)
+    pred_backfill = []
+    if len((prev.get("progress") or {}).get("predHistory", [])) < 20:
+        start_p = (today - timedelta(days=120)).isoformat()
+        raw = safe(client.get_race_predictions, start_p, today_s, "daily", default=None)
+        if isinstance(raw, dict):
+            raw = raw.get("racePredictions") or raw.get("entries") or [raw]
+        for e in raw or []:
+            if not isinstance(e, dict):
+                continue
+            d = (e.get("calendarDate") or e.get("fromCalendarDate") or "")[:10]
+            if d and e.get("timeHalfMarathon"):
+                pred_backfill.append({"date": d, "5K": e.get("time5K"), "10K": e.get("time10K"),
+                                      "half": e.get("timeHalfMarathon"), "full": e.get("timeMarathon")})
+        print(f"✓ Historial de predicciones: {len(pred_backfill)} días")
+
     body = safe(client.get_body_composition, (today - timedelta(days=90)).isoformat(), today_s, default={}) or {}
     last = recovery[-1] if recovery else {}
 
@@ -241,6 +257,7 @@ def fetch_garmin(start: date, today: date, prev: dict) -> dict:
         },
         "recovery": recovery,
         "predictions": preds,
+        "predBackfill": pred_backfill,
         "body": [
             {
                 "date": w.get("calendarDate"),
@@ -745,10 +762,11 @@ def progress(acts: list[dict], data: dict, prev: dict, today: date) -> dict:
                     "n": len(by_month[m])})
 
     preds = data.get("predictions")
-    hist = [h for h in (prev.get("progress") or {}).get("predHistory", []) if h.get("date") != today.isoformat()]
+    by_date = {h["date"]: h for h in data.get("predBackfill") or []}
+    by_date.update({h["date"]: h for h in (prev.get("progress") or {}).get("predHistory", [])})
     if preds:
-        hist.append({"date": today.isoformat(), **preds})
-    hist = hist[-400:]
+        by_date[today.isoformat()] = {"date": today.isoformat(), **preds}
+    hist = [by_date[k] for k in sorted(by_date)][-400:]
     ago = None
     for h in reversed(hist):
         if h["date"] <= (today - timedelta(days=30)).isoformat():
