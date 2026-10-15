@@ -226,7 +226,7 @@
   });
 
   // ---------- objetivos ----------
-  await (async function goals() {
+  await (async function goals() { try {
     let cfg;
     try { cfg = await (await fetch('objetivos.json', { cache: 'no-cache' })).json(); } catch (e) { return; }
     const races = (cfg.carreras || []).filter((r) => r.fecha && r.objetivo).sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -315,7 +315,7 @@
         host.innerHTML = '<p class="note">La gráfica se irá dibujando a partir de hoy: cada día se guarda tu proyección para ver cómo se acerca al objetivo.</p>';
       }
     });
-  })();
+  } catch (err) { console.error('Objetivos:', err); } })();
 
   // ---------- heatmap ----------
   (function heatmap() {

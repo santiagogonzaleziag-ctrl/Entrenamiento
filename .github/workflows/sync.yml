@@ -86,6 +86,9 @@ jobs:
           path: .garmin-cache
           key: garmin-enc-${{ github.run_id }}
 
+      - name: Forzar a los navegadores a cargar la última versión
+        run: sed -i "s/__V__/${{ github.run_id }}/g" site/index.html
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
