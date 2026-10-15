@@ -1,0 +1,6 @@
+# Se genera en cada ejecución; nunca subir datos ni tokens al repo
+site/data.json
+.garmin-tokens/
+garmin_tokens.json
+__pycache__/
+.venv/

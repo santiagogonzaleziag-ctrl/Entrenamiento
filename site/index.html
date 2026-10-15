@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrenamiento</title>
+  <meta name="description" content="Registro diario de entrenamiento sincronizado desde Garmin Connect">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <div>
+        <h1><span id="year"></span> Entrenamiento</h1>
+        <p class="sub" id="sub">Cargando…</p>
+      </div>
+      <button class="theme" id="theme" aria-label="Cambiar tema">◐</button>
+    </header>
+
+    <div id="demo-banner" class="banner" hidden>Datos de ejemplo — conecta tu cuenta de Garmin para ver los tuyos.</div>
+
+    <section class="tiles" id="tiles"></section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2 id="heat-title">Actividades</h2>
+        <div class="legend-scale"><span>Menos</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>Más</span></div>
+      </div>
+      <div class="heat-scroll"><div id="heatmap"></div></div>
+      <div class="day-detail" id="day-detail"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Carga de entrenamiento</h2>
+        <span class="pill" id="form-pill"></span>
+      </div>
+      <div class="load-legend" id="load-legend"></div>
+      <div id="load-chart" class="chart"></div>
+      <p class="note" id="load-note"></p>
+      <p class="fine">Forma (CTL) = media 42 días · Fatiga (ATL) = media 7 días · Frescura (TSB) = forma − fatiga · Carga = duración × intensidad de FC (TRIMP)</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Tendencias</h2><span class="muted">últimas 4 semanas vs 4 anteriores</span></div>
+      <div class="trends" id="trends"></div>
+      <p class="note" id="trend-note"></p>
+    </section>
+
+    <div class="two">
+      <section class="card">
+        <div class="card-head"><h2>Zonas de FC</h2><span class="muted" id="zone-model"></span></div>
+        <div id="zone-chart" class="chart"></div>
+        <div class="zone-split" id="zone-split"></div>
+        <p class="note" id="zone-note"></p>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Tirada larga</h2><span class="muted" id="long-peak"></span></div>
+        <div id="long-chart" class="chart"></div>
+        <p class="note" id="long-note"></p>
+      </section>
+    </div>
+
+    <section class="card" id="body-card" hidden>
+      <div class="card-head"><h2>Composición corporal</h2><span class="muted">media 30 días</span></div>
+      <div class="body-grid" id="body"></div>
+      <p class="note" id="body-note"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Semanas</h2><span class="muted">más reciente primero</span></div>
+      <div class="weeks" id="weeks"></div>
+      <button class="more" id="weeks-more">Ver más semanas</button>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Actividades</h2><span class="muted" id="act-count"></span></div>
+      <div class="filters" id="filters"></div>
+      <div id="acts"></div>
+      <button class="more" id="acts-more">Cargar más</button>
+    </section>
+
+    <footer class="foot">Datos de Garmin Connect · se actualiza cada hora</footer>
+  </main>
+  <div class="tip" id="tip" role="tooltip"></div>
+  <script src="app.js"></script>
+</body>
+</html>

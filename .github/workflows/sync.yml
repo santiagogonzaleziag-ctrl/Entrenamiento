@@ -1,0 +1,83 @@
+name: Sincronizar Garmin y publicar
+
+on:
+  schedule:
+    - cron: "7 * * * *"   # cada hora, minuto 7 (UTC)
+  workflow_dispatch:       # botón "Run workflow" para lanzarlo a mano
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write           # para mantener vivo el cron (ver último paso)
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GARMINTOKENS: ${{ github.workspace }}/.garmin-tokens
+      DASHBOARD_TZ: Europe/Madrid
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Los tokens de Garmin se refrescan solos; guardamos la versión más
+      # reciente en la caché de Actions (privada) para la siguiente ejecución.
+      - name: Restaurar tokens
+        uses: actions/cache/restore@v4
+        with:
+          path: .garmin-tokens
+          key: garmin-tokens-${{ github.run_id }}
+          restore-keys: garmin-tokens-
+
+      - name: Descargar datos
+        env:
+          GARMIN_TOKENS: ${{ secrets.GARMIN_TOKENS }}
+        run: |
+          if [ -z "$GARMIN_TOKENS" ] && [ ! -f .garmin-tokens/garmin_tokens.json ]; then
+            echo "::warning::No hay secreto GARMIN_TOKENS: publicando datos de ejemplo."
+            python scripts/sync.py --demo
+          else
+            python scripts/sync.py
+          fi
+
+      - name: Guardar tokens refrescados
+        if: always() && hashFiles('.garmin-tokens/garmin_tokens.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .garmin-tokens
+          key: garmin-tokens-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      # GitHub pausa los cron tras 60 días sin commits; esto lo evita.
+      - name: Mantener el cron activo
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/sync.yml/enable" || true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
