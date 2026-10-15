@@ -213,7 +213,7 @@
     { l: 'VFC anoche', v: S.hrv, u: 'ms', c: 'var(--recovery)', sp: lastN('hrv'), sub: R?.hrv?.avg7 ? `media 7 d: ${R.hrv.avg7}` : '' },
     { l: 'FC reposo', v: S.restingHR, u: 'ppm', c: 'var(--bad)', sp: lastN('rhr'), sub: R?.rhr?.avg7 ? `media 7 d: ${R.rhr.avg7}` : '' },
     { l: 'Sueño', v: S.sleepSeconds ? S.sleepSeconds / 3600 : null, hm: true, c: 'var(--recovery)', sp: lastN('sleepH'), sub: S.sleepScore ? `puntuación ${S.sleepScore}` : '' },
-    { l: 'Racha', v: HB?.streak, u: HB?.streak === 1 ? 'día' : 'días', c: 'var(--gold)', sub: HB ? `récord ${HB.longest} días` : '' },
+    { l: 'Racha semanal', v: HB?.weekStreak, u: 'sem', c: 'var(--gold)', sub: HB ? `esta semana: ${HB.thisWeek ?? 0} de 3 sesiones` : '' },
     { l: `Horas ${D.year}`, v: T.hours, u: 'h', c: 'var(--effort)', sub: `${T.activities} sesiones · ${T.km.toLocaleString('es-ES')} km` },
   ].filter((m) => m.v != null);
   $('strip').innerHTML = metrics.map((m, i) => `<div class="metric"><span>${m.l}</span><b data-i="${i}"></b><em>${esc(m.sub)}</em>${m.sp ? spark(m.sp, m.c) : ''}</div>`).join('');
@@ -378,9 +378,9 @@
     if (!HB) { $('habitos').hidden = true; return; }
     const pctYear = Math.round((HB.activeDays / HB.daysSoFar) * 100);
     $('streaks').innerHTML = [
-      [HB.streak, HB.streak === 1 ? 'día' : 'días', 'Racha actual', 'días seguidos entrenando'],
-      [HB.longest, 'días', 'Mejor racha', HB.longestEnd ? `terminó el ${fdate(HB.longestEnd, { day: 'numeric', month: 'short' })}` : ''],
-      [HB.weekStreak, HB.weekStreak === 1 ? 'sem' : 'sem', 'Semanas seguidas', 'con 3 o más sesiones'],
+      [HB.weekStreak, HB.weekStreak === 1 ? 'semana' : 'semanas', 'Racha actual', 'seguidas con 3 o más sesiones'],
+      [HB.bestWeekStreak ?? HB.weekStreak, (HB.bestWeekStreak ?? HB.weekStreak) === 1 ? 'semana' : 'semanas', 'Mejor racha', HB.bestWeekStreakEnd ? `hasta la semana ${HB.bestWeekStreakEnd}` : 'en lo que va de año'],
+      [HB.thisWeek ?? 0, 'de 3', 'Esta semana', (HB.thisWeek ?? 0) >= 3 ? 'objetivo cumplido' : `faltan ${3 - (HB.thisWeek ?? 0)} para el objetivo`],
       [pctYear, '%', 'Días activos', `${HB.activeDays} de ${HB.daysSoFar} este año`],
     ].map(([v, u, l, e]) => `<div class="streak"><span>${l}</span><b><span data-v="${v}" style="font:inherit;color:inherit;letter-spacing:0"></span><small>${u}</small></b><em>${esc(e)}</em></div>`).join('');
     document.querySelectorAll('.streak b span').forEach((s) => countUp(s, +s.dataset.v));

@@ -679,6 +679,12 @@ def habits(acts: list[dict], weeks: list[dict], today: date) -> dict:
             run_weeks += 1
         else:
             break
+    best_weeks, cur_w, best_weeks_end = 0, 0, None
+    for w in full_weeks:
+        cur_w = cur_w + 1 if w["sessions"] >= 3 else 0
+        if cur_w > best_weeks:
+            best_weeks, best_weeks_end = cur_w, w["week"]
+    this_week = weeks[-1]["sessions"] if weeks else 0
 
     fav_day = DIAS[max(range(7), key=lambda i: weekday[i])] if any(weekday) else None
     quiet_day = DIAS[min(range(7), key=lambda i: weekday[i])] if any(weekday) else None
@@ -707,6 +713,7 @@ def habits(acts: list[dict], weeks: list[dict], today: date) -> dict:
         "streak": streak, "longest": longest, "longestEnd": best_end,
         "activeDays": active_year, "daysSoFar": days_so_far,
         "weekStreak": run_weeks, "goalWeeks": goal_weeks, "fullWeeks": len(full_weeks),
+        "bestWeekStreak": best_weeks, "bestWeekStreakEnd": best_weeks_end, "thisWeek": this_week,
         "weekday": [round(m) for m in weekday], "punch": punch, "monthly": monthly,
         "insights": insights,
     }
